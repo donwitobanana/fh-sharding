@@ -56,15 +56,23 @@ func (w *Workerpool) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			cancel()
+			w.stop()
 			return nil
 		case err := <-w.errChan:
 			if err != nil {
 				cancel()
+				w.stop()
 				return err
 			}
 		}
 	}
 
+}
+
+func (w *Workerpool) stop() {
+	close(w.errChan)
+	close(w.messageChan)
+	close(w.workerSem)
 }
 
 func (w *Workerpool) initWorkerpool(ctx context.Context, workerConfig WorkerConfig) {

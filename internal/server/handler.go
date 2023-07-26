@@ -8,9 +8,7 @@ import (
 	"github.com/donwitobanana/fh-sharding/internal/sharding"
 )
 
-type Request struct {
-	Messages []sharding.Message
-}
+type Request []sharding.Message
 
 func handleMessages(svc sharding.Service) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -21,7 +19,7 @@ func handleMessages(svc sharding.Service) func(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-		err := svc.ShardData(req.Messages)
+		err := svc.ShardData(req)
 		if err != nil {
 			writeErrorResponse(w, http.StatusInternalServerError, errors.New("failed to shard data"))
 			return

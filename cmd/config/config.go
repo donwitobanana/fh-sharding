@@ -10,6 +10,7 @@ type AppConfig struct {
 	WorkersTimeoutInSeconds int `env:"WORKERS_TIMEOUT_IN_SECONDS"`
 	WorkersBatchSize        int `env:"WORKERS_BATCH_SIZE"`
 	PartitionsNumber        int `env:"PARTITIONS_NUMBER"`
+	StoragePath             string `env:"STORAGE_PATH"`
 }
 
 func LoadAppConfig() (AppConfig, error) {

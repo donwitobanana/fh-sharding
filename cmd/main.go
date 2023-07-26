@@ -9,6 +9,7 @@ import (
 	"github.com/donwitobanana/fh-sharding/cmd/config"
 	"github.com/donwitobanana/fh-sharding/internal/server"
 	"github.com/donwitobanana/fh-sharding/internal/sharding"
+	"github.com/donwitobanana/fh-sharding/internal/storage"
 	"github.com/donwitobanana/fh-sharding/internal/workers"
 )
 
@@ -30,7 +31,9 @@ func main() {
 	}
 
 	errChan := make(chan error)
-	workerpoolMap := initWorkerpools(ctx, workerpoolConfig, appConfig.PartitionsNumber, errChan)
+	storageSvc := storage.NewService(appConfig.StoragePath)
+
+	workerpoolMap := initWorkerpools(ctx, workerpoolConfig, appConfig.PartitionsNumber, errChan, storageSvc)
 	svc := sharding.NewService(workerpoolMap)
 
 	server.RegisterHandlers(svc)
@@ -42,13 +45,13 @@ func main() {
 	}
 }
 
-func initWorkerpools(ctx context.Context, config workers.WorkerpoolConfig, partitionsNumber int, errChan chan error) map[int]*workers.Workerpool {
+func initWorkerpools(ctx context.Context, config workers.WorkerpoolConfig, partitionsNumber int, errChan chan error, storageSvc storage.Service) map[int]*workers.Workerpool {
 	fmt.Println("initializing workerpools")
 
 	workerpoolMap := make(map[int]*workers.Workerpool, partitionsNumber)
 	for i := 0; i < partitionsNumber; i++ {
 		config.Partition = i
-		workerpool := workers.NewWorkerpool(config)
+		workerpool := workers.NewWorkerpool(config, storageSvc)
 		go func() {
 			err := workerpool.Start(ctx)
 			if err != nil {

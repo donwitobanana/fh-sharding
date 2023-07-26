@@ -4,18 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"time"
 
+	"github.com/donwitobanana/fh-sharding/internal/storage"
 	"github.com/google/uuid"
-)
-
-const (
-	storagePrefix = "storage"
 )
 
 type Worker struct {
 	id           uuid.UUID
 	cfg          WorkerConfig
+	storageSvc   storage.Service
 	batchCounter int
 	itemCounter  int
 	buffer       []interface{}
@@ -25,24 +23,35 @@ type WorkerConfig struct {
 	input     chan interface{}
 	errChan   chan error
 	sem       chan bool
+	timeout   time.Duration
 	partition int
 	batchSize int
 }
 
-func NewWorker(cfg WorkerConfig) *Worker {
+func NewWorker(cfg WorkerConfig, storageSvc storage.Service) *Worker {
 	id := uuid.New()
 
 	return &Worker{
-		id:     id,
-		cfg:    cfg,
-		buffer: make([]interface{}, 0, cfg.batchSize),
+		id:         id,
+		cfg:        cfg,
+		storageSvc: storageSvc,
+		buffer:     make([]interface{}, 0, cfg.batchSize),
 	}
 }
 
 func (w *Worker) Start(ctx context.Context) {
 	fmt.Printf("starting worker, partition %d, id %s\n", w.cfg.partition, w.id.String())
+	timeoutChan := time.After(w.cfg.timeout)
 	for {
 		select {
+		case <-timeoutChan:
+			err := w.Stop()
+			if err != nil {
+				w.cfg.errChan <- err
+				return
+			}
+			return
+
 		case <-ctx.Done():
 			err := w.Stop()
 			if err != nil {
@@ -50,6 +59,7 @@ func (w *Worker) Start(ctx context.Context) {
 				return
 			}
 			return
+
 		case msg := <-w.cfg.input:
 			err := w.Process(msg)
 			if err != nil {
@@ -91,17 +101,12 @@ func (w *Worker) Process(msg interface{}) error {
 func (w *Worker) writeData() error {
 	fmt.Printf("writing data, partition %d, id %s, batch no %d\n", w.cfg.partition, w.id.String(), w.batchCounter)
 
-	file, err := os.Create(w.getDestination())
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
 	data, err := json.Marshal(w.buffer)
 	if err != nil {
 		return err
 	}
-	_, err = file.Write(data)
+
+	err = w.storageSvc.Write(w.getDestination(), data)
 	if err != nil {
 		return err
 	}
@@ -113,5 +118,5 @@ func (w *Worker) writeData() error {
 }
 
 func (w *Worker) getDestination() string {
-	return fmt.Sprintf("%s/%d/%s/%d", storagePrefix, w.cfg.partition, w.id.String(), w.batchCounter)
+	return fmt.Sprintf("%d/%s-%d", w.cfg.partition, w.id.String(), w.batchCounter)
 }

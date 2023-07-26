@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/donwitobanana/fh-sharding/internal/storage"
 )
 
 type WorkerpoolConfig struct {
@@ -16,15 +18,17 @@ type WorkerpoolConfig struct {
 
 type Workerpool struct {
 	workerpoolConfig WorkerpoolConfig
-	taskQueue        chan interface{}
+	storageSvc 	 storage.Service
+	messageChan      chan interface{}
 	workerSem        chan bool
 	errChan          chan error
 }
 
-func NewWorkerpool(config WorkerpoolConfig) *Workerpool {
+func NewWorkerpool(config WorkerpoolConfig, storageSvc storage.Service) *Workerpool {
 	return &Workerpool{
 		workerpoolConfig: config,
-		taskQueue:        make(chan interface{}),
+		storageSvc: storageSvc,
+		messageChan:      make(chan interface{}),
 		workerSem:        make(chan bool, config.WorkersMaxNumber),
 		errChan:          make(chan error),
 	}
@@ -34,27 +38,28 @@ func (w *Workerpool) Start(ctx context.Context) error {
 	fmt.Printf("starting workerpool, partition %d\n", w.workerpoolConfig.Partition)
 
 	workerConfig := WorkerConfig{
-		input:     w.taskQueue,
+		input:     w.messageChan,
 		errChan:   w.errChan,
 		sem:       w.workerSem,
 		partition: w.workerpoolConfig.Partition,
 		batchSize: w.workerpoolConfig.WorkersBatchSize,
+		timeout:   w.workerpoolConfig.WorkersTimeout,
 	}
 
-	timeoutCtx, timeoutCtxCancel := context.WithTimeout(ctx, w.workerpoolConfig.WorkersTimeout)
+	ctx, cancel := context.WithCancel(ctx)
 
-	go w.initWorkerpool(timeoutCtx, workerConfig)
+	go w.initWorkerpool(ctx, workerConfig)
 
-	go w.AddWorkers(ctx, workerConfig)
+	go w.spawnWorkers(ctx, workerConfig)
 
 	for {
 		select {
 		case <-ctx.Done():
-			timeoutCtxCancel()
+			cancel()
 			return nil
 		case err := <-w.errChan:
 			if err != nil {
-				timeoutCtxCancel()
+				cancel()
 				return err
 			}
 		}
@@ -63,35 +68,30 @@ func (w *Workerpool) Start(ctx context.Context) error {
 }
 
 func (w *Workerpool) initWorkerpool(ctx context.Context, workerConfig WorkerConfig) {
-		for i := 0; i < w.workerpoolConfig.WorkersInitNumber; i++ {
-			select {
-			case <-ctx.Done():
-				return
-			case w.workerSem <- true:
-				worker := NewWorker(workerConfig)
-				go worker.Start(ctx)
-			}
+	for i := 0; i < w.workerpoolConfig.WorkersInitNumber; i++ {
+		select {
+		case <-ctx.Done():
+			return
+		case w.workerSem <- true:
+			worker := NewWorker(workerConfig, w.storageSvc)
+			go worker.Start(ctx)
 		}
+	}
 }
 
-func (w *Workerpool) AddWorkers(ctx context.Context, workerConfig WorkerConfig) {
+func (w *Workerpool) spawnWorkers(ctx context.Context, workerConfig WorkerConfig) {
 	<-time.After(w.workerpoolConfig.WorkersTimeout - time.Second*10)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case w.workerSem <- true:
-
-			workerCtx, cancel := context.WithTimeout(context.Background(), w.workerpoolConfig.WorkersTimeout)
-			defer cancel()
-
-			worker := NewWorker(workerConfig)
-			go worker.Start(workerCtx)
+			worker := NewWorker(workerConfig, w.storageSvc)
+			go worker.Start(ctx)
 		}
 	}
 }
 
 func (w *Workerpool) SendMessage(msg interface{}) {
-	w.taskQueue <- msg
+	w.messageChan <- msg
 }
-

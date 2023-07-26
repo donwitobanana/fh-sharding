@@ -13,3 +13,6 @@ test:
 	@echo "Running tests..."
 	@./smoke_test.sh
 	@echo "Done."
+
+run:
+	env $$(cat .env) go run cmd/main.go
